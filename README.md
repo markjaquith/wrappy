@@ -8,6 +8,7 @@
 - Rewrites the longest matching leading subcommand path
 - Preserves the rest of argv unchanged
 - Replaces itself with the real command via `exec`
+- Preserves shell-backed command wrappers by rewriting argv before calling the original shell function
 - Generates zsh wrapper functions with `wrappy init zsh`
 - Delegates zsh completion to the original command and merges alias suggestions
 - Exposes `wrappy complete` in JSON and zsh-friendly formats
@@ -47,6 +48,7 @@ wt team ls --json
 
 ```text
 wrappy exec <cmd> [args...]
+wrappy rewrite [--format json|zsh] <cmd> [args...]
 wrappy init zsh
 wrappy complete [--format json|zsh] [--current N] <cmd> [words...]
 ```

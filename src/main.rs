@@ -13,6 +13,7 @@ const HELP: &str = "wrappy
 
 Usage:
   wrappy exec <cmd> [args...]
+  wrappy rewrite <cmd> [args...]
   wrappy init zsh
   wrappy complete <cmd> [words...]
   wrappy help
@@ -50,8 +51,19 @@ struct AliasSuggestion {
     values: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct RewriteOutput {
+    args: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CompletionFormat {
+    Json,
+    Zsh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RewriteFormat {
     Json,
     Zsh,
 }
@@ -60,6 +72,11 @@ enum CompletionFormat {
 struct CompleteOptions {
     format: CompletionFormat,
     current: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RewriteOptions {
+    format: RewriteFormat,
 }
 
 #[derive(Debug)]
@@ -113,6 +130,11 @@ fn run() -> Result<(), String> {
 
             print!("{}", render_zsh_init(&list_configured_commands()?));
             Ok(())
+        }
+        "rewrite" => {
+            let remaining = args.collect::<Vec<_>>();
+            let (options, command_name, rewrite_args) = parse_rewrite_args(&remaining)?;
+            run_rewrite(&command_name, &rewrite_args, options)
         }
         "complete" => {
             let remaining = args.collect::<Vec<_>>();
@@ -187,6 +209,33 @@ fn run_complete(
     Ok(())
 }
 
+fn run_rewrite(
+    command_name: &str,
+    args: &[OsString],
+    options: RewriteOptions,
+) -> Result<(), String> {
+    let config = load_command_config(command_name)?;
+    let rewritten = config.rewrite_os_strings(args);
+
+    match options.format {
+        RewriteFormat::Json => {
+            let payload = serde_json::to_string(&RewriteOutput {
+                args: rewritten
+                    .iter()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .collect(),
+            })
+            .map_err(|error| format!("failed to serialize rewrite payload: {error}"))?;
+            println!("{payload}");
+        }
+        RewriteFormat::Zsh => {
+            print!("{}", render_zsh_rewrite_reply(&rewritten));
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_complete_args(
     args: &[OsString],
 ) -> Result<(CompleteOptions, String, Vec<String>), String> {
@@ -240,12 +289,62 @@ fn parse_complete_args(
     Ok((CompleteOptions { format, current }, command_name, words))
 }
 
+fn parse_rewrite_args(
+    args: &[OsString],
+) -> Result<(RewriteOptions, String, Vec<OsString>), String> {
+    let mut format = RewriteFormat::Json;
+    let mut index = 0;
+
+    while let Some(arg) = args.get(index) {
+        let value = arg.to_string_lossy();
+
+        if value == "--" {
+            index += 1;
+            break;
+        }
+
+        if value == "--format" {
+            let next = args
+                .get(index + 1)
+                .ok_or_else(|| "missing value for `wrappy rewrite --format`".to_string())?;
+            format = parse_rewrite_format(&next.to_string_lossy())?;
+            index += 2;
+            continue;
+        }
+
+        if value.starts_with('-') {
+            return Err(format!("unknown option for `rewrite`: {value}"));
+        }
+
+        break;
+    }
+
+    let command_name = args
+        .get(index)
+        .ok_or_else(|| "missing wrapped command for `rewrite`".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let rewrite_args = args[index + 1..].to_vec();
+
+    Ok((RewriteOptions { format }, command_name, rewrite_args))
+}
+
 fn parse_completion_format(value: &str) -> Result<CompletionFormat, String> {
     match value {
         "json" => Ok(CompletionFormat::Json),
         "zsh" => Ok(CompletionFormat::Zsh),
         _ => Err(format!(
             "unsupported completion format `{value}`; expected `json` or `zsh`"
+        )),
+    }
+}
+
+fn parse_rewrite_format(value: &str) -> Result<RewriteFormat, String> {
+    match value {
+        "json" => Ok(RewriteFormat::Json),
+        "zsh" => Ok(RewriteFormat::Zsh),
+        _ => Err(format!(
+            "unsupported rewrite format `{value}`; expected `json` or `zsh`"
         )),
     }
 }
@@ -320,6 +419,7 @@ fn render_zsh_init(commands: &[String]) -> String {
         r#"# wrappy init zsh
 typeset -gA _wrappy_original_comps
 typeset -gA _wrappy_completion_wrapped
+typeset -gA _wrappy_original_functions
 
 _wrappy_complete_dispatch() {
   emulate -L zsh
@@ -378,6 +478,64 @@ _wrappy_complete_dispatch() {
   return $result
 }
 
+_wrappy_call_original_function() {
+  emulate -L zsh
+  setopt localoptions noshwordsplit
+
+  local command_name="$1"
+  local original_function="$2"
+  shift 2
+
+  local output
+  output="$(command wrappy rewrite --format zsh "$command_name" "$@")" || return 1
+
+  local -a _wrappy_reply_args
+  eval "$output"
+  "$original_function" "${_wrappy_reply_args[@]}"
+}
+
+_wrappy_install_exec_wrapper() {
+  emulate -L zsh
+  local command_name="$1"
+
+  eval "function ${command_name}() {
+    command wrappy exec ${command_name:q} \"\$@\"
+  }"
+}
+
+_wrappy_install_function_wrapper() {
+  emulate -L zsh
+  local command_name="$1"
+  local original_function="$2"
+
+  functions -c "$command_name" "$original_function"
+
+  eval "function ${command_name}() {
+    _wrappy_call_original_function ${command_name:q} ${original_function:q} \"\$@\"
+  }"
+}
+
+_wrappy_try_wrap_command() {
+  emulate -L zsh
+  local command_name="$1"
+  local safe_name="$2"
+  local original_function="_wrappy_original_${safe_name}"
+  local current_body="${functions[$command_name]-}"
+
+  if [[ -n "$current_body" && "$current_body" == *"_wrappy_call_original_function ${command_name}"* ]]; then
+    return 0
+  fi
+
+  if (( $+functions[$command_name] )); then
+    _wrappy_install_function_wrapper "$command_name" "$original_function"
+    _wrappy_original_functions[$command_name]="$original_function"
+    return 0
+  fi
+
+  _wrappy_install_exec_wrapper "$command_name"
+  return 0
+}
+
 _wrappy_register_completion() {
   emulate -L zsh
   local command_name="$1"
@@ -410,18 +568,27 @@ _wrappy_register_completion() {
         }
 
         script.push_str(&format!(
-            "function {command_name} {{\n  command wrappy exec {} \"$@\"\n}}\n",
-            shell_quote(command_name)
-        ));
-
-        script.push_str(&format!(
             "_wrappy_complete_{}() {{\n  _wrappy_complete_dispatch {}\n}}\n",
             sanitize_zsh_identifier(command_name),
             shell_quote(command_name)
         ));
     }
 
-    script.push_str("_wrappy_try_register_all() {\n  emulate -L zsh\n");
+    script.push_str("_wrappy_try_wrap_all() {\n  emulate -L zsh\n");
+
+    for command_name in commands {
+        if !is_safe_zsh_function_name(command_name) {
+            continue;
+        }
+
+        script.push_str(&format!(
+            "  _wrappy_try_wrap_command {} {} || return 1\n",
+            shell_quote(command_name),
+            shell_quote(&sanitize_zsh_identifier(command_name))
+        ));
+    }
+
+    script.push_str("  return 0\n}\n\n_wrappy_try_register_all() {\n  emulate -L zsh\n");
 
     for command_name in commands {
         if !is_safe_zsh_function_name(command_name) {
@@ -439,15 +606,24 @@ _wrappy_register_completion() {
         r#"  return 0
 }
 
-if ! _wrappy_try_register_all; then
-  autoload -Uz add-zsh-hook
-  _wrappy_register_on_precmd() {
-    emulate -L zsh
-    _wrappy_try_register_all || return 0
-    add-zsh-hook -d precmd _wrappy_register_on_precmd 2>/dev/null
-    unfunction _wrappy_register_on_precmd 2>/dev/null
-  }
-  add-zsh-hook precmd _wrappy_register_on_precmd
+_wrappy_activate() {
+  emulate -L zsh
+  _wrappy_try_wrap_all || return 1
+  _wrappy_try_register_all || return 1
+  return 0
+}
+
+autoload -Uz add-zsh-hook
+_wrappy_activate_on_precmd() {
+  emulate -L zsh
+  _wrappy_activate || return 0
+  add-zsh-hook -d precmd _wrappy_activate_on_precmd 2>/dev/null
+  unfunction _wrappy_activate_on_precmd 2>/dev/null
+}
+add-zsh-hook precmd _wrappy_activate_on_precmd
+
+if (( ${+_comps} )); then
+  _wrappy_activate || true
 fi
 "#,
     );
@@ -723,6 +899,16 @@ fn render_zsh_completion_reply(response: &CompletionOutput) -> String {
     )
 }
 
+fn render_zsh_rewrite_reply(args: &[OsString]) -> String {
+    let values = args
+        .iter()
+        .map(|value| shell_quote(&value.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    format!("typeset -ga _wrappy_reply_args=({values})\n")
+}
+
 fn rewrite_completion_position(position: usize, consumed: usize, expanded: usize) -> usize {
     if position <= consumed {
         expanded.max(1)
@@ -850,9 +1036,9 @@ mod tests {
     fn renders_zsh_wrappers() {
         let output = render_zsh_init(&["wt".to_string()]);
 
-        assert!(output.contains("function wt"));
-        assert!(output.contains("command wrappy exec 'wt' \"$@\""));
         assert!(output.contains("_wrappy_complete_wrappywt()"));
+        assert!(output.contains("_wrappy_try_wrap_command 'wt' 'wrappywt'"));
+        assert!(output.contains("command wrappy rewrite --format zsh"));
         assert!(output.contains("_wrappy_register_completion 'wt' _wrappy_complete_wrappywt"));
     }
 
@@ -897,5 +1083,22 @@ mod tests {
         assert_eq!(options.current, Some(3));
         assert_eq!(command_name, "wt");
         assert_eq!(words, vec!["wt", "rm"]);
+    }
+
+    #[test]
+    fn parse_rewrite_args_supports_format() {
+        let args = vec![
+            OsString::from("--format"),
+            OsString::from("zsh"),
+            OsString::from("wt"),
+            OsString::from("ls"),
+        ];
+
+        let (options, command_name, rewrite_args) =
+            parse_rewrite_args(&args).expect("args should parse");
+
+        assert_eq!(options.format, RewriteFormat::Zsh);
+        assert_eq!(command_name, "wt");
+        assert_eq!(rewrite_args, vec![OsString::from("ls")]);
     }
 }
