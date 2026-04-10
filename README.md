@@ -75,6 +75,32 @@ cargo publish --dry-run
 
 ## Release Process
 
+### One-Time Setup
+
+1. Create the `markjaquith/wrappy` GitHub repository.
+2. Create a crates.io API token.
+3. Add the token to GitHub Actions as `CARGO_REGISTRY_TOKEN`:
+   Repo Settings -> Secrets and variables -> Actions -> New repository secret
+4. Log in locally once:
+
+```sh
+cargo login <token>
+```
+
+You can verify the GitHub secret exists with:
+
+```sh
+gh secret list --repo markjaquith/wrappy
+```
+
+### First Publish
+
+```sh
+cargo publish
+```
+
+### Subsequent Releases
+
 ```sh
 # patch, or minor, or major
 cargo release patch --no-publish --execute
@@ -82,6 +108,15 @@ git push --follow-tags
 ```
 
 The tag push triggers the GitHub release workflow, which reruns CI and publishes to crates.io with `CARGO_REGISTRY_TOKEN`.
+
+You can watch the release workflow with:
+
+```sh
+gh run list --repo markjaquith/wrappy --workflow release.yml
+```
+
+If a tagged release fails before publish, fix the issue and push a new tag for the corrected version.
+If publish succeeds for a version, that exact version can never be reused on crates.io.
 
 ## License
 
