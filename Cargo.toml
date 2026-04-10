@@ -2,8 +2,39 @@
 name = "wrappy"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.87"
+authors = ["Mark Jaquith <mark@jaquith.me>"]
+license = "MIT"
+repository = "https://github.com/markjaquith/wrappy"
+description = "A zsh-first CLI wrapper for subcommand aliases"
+readme = "README.md"
+keywords = ["cli", "zsh", "alias", "wrapper", "subcommands"]
+categories = ["command-line-utilities"]
+
+[package.metadata.release]
+push = true
+publish = true
+consolidate-commits = false
+tag-name = "v{{version}}"
+pre-release-commit-message = "chore: release {{version}}"
+
+[[bin]]
+name = "wrappy"
+path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+unnecessary_wraps = "allow"

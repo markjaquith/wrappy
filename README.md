@@ -2,6 +2,14 @@
 
 `wrappy` is a small CLI wrapper for subcommand aliases.
 
+## Install
+
+Requires Rust and Cargo.
+
+```sh
+cargo install wrappy
+```
+
 ## What v0 does
 
 - Loads per-command aliases from `~/.config/wrappy/<command>.toml`
@@ -54,3 +62,27 @@ wrappy complete [--format json|zsh] [--current N] <cmd> [words...]
 ```
 
 `WRAPPY_DEBUG=1` prints rewrite and resolution details before `exec`.
+
+## Development
+
+```sh
+cargo fmt
+cargo clippy -- -D warnings
+cargo test
+cargo build --release
+cargo publish --dry-run
+```
+
+## Release Process
+
+```sh
+# patch, or minor, or major
+cargo release patch --no-publish --execute
+git push --follow-tags
+```
+
+The tag push triggers the GitHub release workflow, which reruns CI and publishes to crates.io with `CARGO_REGISTRY_TOKEN`.
+
+## License
+
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.

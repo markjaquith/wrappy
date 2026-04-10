@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env,
     ffi::{OsStr, OsString},
+    fmt::Write as _,
     fs,
     os::unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
@@ -414,6 +415,7 @@ fn list_configured_commands() -> Result<Vec<String>, String> {
     Ok(commands)
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_zsh_init(commands: &[String]) -> String {
     let mut script = String::from(
         r#"# wrappy init zsh
@@ -560,18 +562,20 @@ _wrappy_register_completion() {
 
     for command_name in commands {
         if !is_safe_zsh_function_name(command_name) {
-            script.push_str(&format!(
-                "# skipped unsupported command name {}\n",
+            let _ = writeln!(
+                script,
+                "# skipped unsupported command name {}",
                 shell_quote(command_name)
-            ));
+            );
             continue;
         }
 
-        script.push_str(&format!(
-            "_wrappy_complete_{}() {{\n  _wrappy_complete_dispatch {}\n}}\n",
+        let _ = writeln!(
+            script,
+            "_wrappy_complete_{}() {{\n  _wrappy_complete_dispatch {}\n}}",
             sanitize_zsh_identifier(command_name),
             shell_quote(command_name)
-        ));
+        );
     }
 
     script.push_str("_wrappy_try_wrap_all() {\n  emulate -L zsh\n");
@@ -581,11 +585,12 @@ _wrappy_register_completion() {
             continue;
         }
 
-        script.push_str(&format!(
-            "  _wrappy_try_wrap_command {} {} || return 1\n",
+        let _ = writeln!(
+            script,
+            "  _wrappy_try_wrap_command {} {} || return 1",
             shell_quote(command_name),
             shell_quote(&sanitize_zsh_identifier(command_name))
-        ));
+        );
     }
 
     script.push_str("  return 0\n}\n\n_wrappy_try_register_all() {\n  emulate -L zsh\n");
@@ -595,15 +600,16 @@ _wrappy_register_completion() {
             continue;
         }
 
-        script.push_str(&format!(
-            "  _wrappy_register_completion {} _wrappy_complete_{} || return 1\n",
+        let _ = writeln!(
+            script,
+            "  _wrappy_register_completion {} _wrappy_complete_{} || return 1",
             shell_quote(command_name),
             sanitize_zsh_identifier(command_name)
-        ));
+        );
     }
 
     script.push_str(
-        r#"  return 0
+        r"  return 0
 }
 
 _wrappy_activate() {
@@ -625,7 +631,7 @@ add-zsh-hook precmd _wrappy_activate_on_precmd
 if (( ${+_comps} )); then
   _wrappy_activate || true
 fi
-"#,
+",
     );
 
     script
@@ -670,7 +676,8 @@ fn resolve_real_command(command_name: &str) -> Result<PathBuf, String> {
             continue;
         }
 
-        let canonical_candidate = fs::canonicalize(&candidate).unwrap_or(candidate.clone());
+        let canonical_candidate =
+            fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
 
         if current_executable
             .as_ref()
@@ -776,13 +783,14 @@ impl CommandConfig {
         current: Option<usize>,
     ) -> CompletionOutput {
         let matched = self.resolve_strings(args);
-        let rewritten_args = if let Some(matched) = matched.as_ref() {
-            let mut rewritten = matched.rule.value.clone();
-            rewritten.extend_from_slice(&args[matched.consumed..]);
-            rewritten
-        } else {
-            args.to_vec()
-        };
+        let rewritten_args = matched.as_ref().map_or_else(
+            || args.to_vec(),
+            |matched| {
+                let mut rewritten = matched.rule.value.clone();
+                rewritten.extend_from_slice(&args[matched.consumed..]);
+                rewritten
+            },
+        );
         let rewritten_current = current.map(|position| {
             matched.as_ref().map_or(position, |matched| {
                 rewrite_completion_position(position, matched.consumed, matched.rule.value.len())
