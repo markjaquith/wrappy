@@ -1,16 +1,54 @@
 # wrappy
 
-`wrappy` is a small CLI wrapper for subcommand aliases.
+`wrappy` adds subcommand aliases to other programs.
 
-## Install
+e.g. you have a program `foo` with a subcommand `bartholemew`. Ew. That's too long. But `foo` doesn't have any way to register an alias for a subcommand.
 
-Requires Rust and Cargo.
+With wrappy, you create:
 
-```sh
-cargo install wrappy
+```toml
+# ~/.config/wrappy/foo.toml
+[aliases]
+bar = ["bartholomew"]
 ```
 
-## What v0 does
+Now you can run `foo bar`.
+
+> [!NOTE]
+> Wrappy currently requires zsh
+> If you want to add support for other shells, PRs are welcome!
+
+## Config
+
+Create a config file such as `~/.config/wrappy/yourcommand.toml`:
+
+```toml
+[aliases]
+rm = ["remove"]
+"team ls" = ["team", "list"]
+```
+
+With this config...
+
+```zsh
+yourcommand rm foo
+# executes: yourcommand remove foo
+
+yourcommand team ls --json
+# executes: yourcommand team list --json
+```
+
+## Installation
+
+1. Install Rust: `curl https://sh.rustup.rs -sSf | sh`
+2. Install wrappy: `cargo install wrappy`
+3. Add zsh initialization code to `.zshrc`:
+
+```zsh
+eval "$(wrappy init zsh)"
+```
+
+## How it Works
 
 - Loads per-command aliases from `~/.config/wrappy/<command>.toml`
 - Rewrites the longest matching leading subcommand path
@@ -20,37 +58,6 @@ cargo install wrappy
 - Generates zsh wrapper functions with `wrappy init zsh`
 - Delegates zsh completion to the original command and merges alias suggestions
 - Exposes `wrappy complete` in JSON and zsh-friendly formats
-
-## Config
-
-Create a config file such as `~/.config/wrappy/wt.toml`:
-
-```toml
-[aliases]
-rm = ["remove"]
-"team ls" = ["team", "list"]
-```
-
-## Usage
-
-Build and install however you prefer, then enable wrapping in zsh:
-
-```zsh
-eval "$(wrappy init zsh)"
-```
-
-If `compinit` is already loaded, `wrappy` registers completion immediately.
-If not, it defers registration until the first prompt after completion is available.
-
-With the config above:
-
-```zsh
-wt rm foo
-# executes: wt remove foo
-
-wt team ls --json
-# executes: wt team list --json
-```
 
 ## Commands
 
@@ -70,53 +77,7 @@ cargo fmt
 cargo clippy -- -D warnings
 cargo test
 cargo build --release
-cargo publish --dry-run
 ```
-
-## Release Process
-
-### One-Time Setup
-
-1. Create the `markjaquith/wrappy` GitHub repository.
-2. Create a crates.io API token.
-3. Add the token to GitHub Actions as `CARGO_REGISTRY_TOKEN`:
-   Repo Settings -> Secrets and variables -> Actions -> New repository secret
-4. Log in locally once:
-
-```sh
-cargo login <token>
-```
-
-You can verify the GitHub secret exists with:
-
-```sh
-gh secret list --repo markjaquith/wrappy
-```
-
-### First Publish
-
-```sh
-cargo publish
-```
-
-### Subsequent Releases
-
-```sh
-# patch, or minor, or major
-cargo release patch --no-publish --execute
-git push --follow-tags
-```
-
-The tag push triggers the GitHub release workflow, which reruns CI and publishes to crates.io with `CARGO_REGISTRY_TOKEN`.
-
-You can watch the release workflow with:
-
-```sh
-gh run list --repo markjaquith/wrappy --workflow release.yml
-```
-
-If a tagged release fails before publish, fix the issue and push a new tag for the corrected version.
-If publish succeeds for a version, that exact version can never be reused on crates.io.
 
 ## License
 
